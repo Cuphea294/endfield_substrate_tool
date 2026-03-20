@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>基質厳選ツール | Endfield Substrate Optimizer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; color: #e5e7eb; font-family: 'Noto Sans JP','Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif; }
+  select option { background: #141420 !important; color: #e5e7eb !important; }
+  select option:checked { background: #2a2a4a !important; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+  button { font-family: inherit; }
+  select { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+// ═══════════════════════════════════════════════
+// エンドフィールド基質厳選ツール v3 (GitHub Pages版)
+// ═══════════════════════════════════════════════
+
+const SPREADSHEET_CSV_URL =
+  "https://docs.google.com/spreadsheets/d/1-rBffU6yb1vybRvLMpIvpzi-YKvY-j7ML3FPuMJkuhQ/export?format=csv";
+
+const FALLBACK_WEAPONS = [
+  { rarity: "☆6", type: "片手剣", name: "フレイムフォージ", base: "知性", sub: "攻撃力", skill: "夜幕" },
+  { rarity: "☆6", type: "片手剣", name: "大願", base: "敏捷", sub: "攻撃力", skill: "付術" },
+  { rarity: "☆6", type: "片手剣", name: "不知帰", base: "意志", sub: "攻撃力", skill: "流回" },
+  { rarity: "☆6", type: "片手剣", name: "テルミット・カッター", base: "意志", sub: "攻撃力", skill: "流回" },
+  { rarity: "☆6", type: "片手剣", name: "ダークトーチ", base: "知性", sub: "灼熱ダメージ", skill: "付術" },
+  { rarity: "☆6", type: "片手剣", name: "フーヤオ", base: "メイン能力", sub: "会心率", skill: "夜幕" },
+  { rarity: "☆6", type: "片手剣", name: "輝かしき名声", base: "メイン能力", sub: "物理ダメージ", skill: "残虐" },
+  { rarity: "☆6", type: "片手剣", name: "白夜新星", base: "メイン能力", sub: "アーツ強度", skill: "付術" },
+  { rarity: "☆6", type: "アーツユニット", name: "破壊ユニット", base: "メイン能力", sub: "アーツ強度", skill: "噴発" },
+  { rarity: "☆6", type: "アーツユニット", name: "蒼星の囁き", base: "知性", sub: "回復効率", skill: "付術" },
+  { rarity: "☆6", type: "アーツユニット", name: "騎士精神", base: "意志", sub: "HP", skill: "治癒" },
+  { rarity: "☆6", type: "アーツユニット", name: "使命必達", base: "意志", sub: "必殺リチャージ", skill: "追襲" },
+  { rarity: "☆6", type: "アーツユニット", name: "遺忘", base: "知性", sub: "アーツダメージ", skill: "夜幕" },
+  { rarity: "☆6", type: "アーツユニット", name: "作品：蝕跡", base: "意志", sub: "自然ダメージ", skill: "圧制" },
+  { rarity: "☆6", type: "拳銃", name: "芸術の独裁者", base: "知性", sub: "会心率", skill: "切骨" },
+  { rarity: "☆6", type: "拳銃", name: "ナビゲーター", base: "知性", sub: "寒冷ダメージ", skill: "付術" },
+  { rarity: "☆6", type: "拳銃", name: "楔", base: "メイン能力", sub: "会心率", skill: "付術" },
+  { rarity: "☆6", type: "拳銃", name: "同類共食", base: "メイン能力", sub: "アーツダメージ", skill: "付術" },
+  { rarity: "☆6", type: "両手剣", name: "大雷斑", base: "筋力", sub: "HP", skill: "治癒" },
+  { rarity: "☆6", type: "両手剣", name: "グラヴェンガー", base: "筋力", sub: "攻撃力", skill: "噴発" },
+  { rarity: "☆6", type: "両手剣", name: "鑑", base: "メイン能力", sub: "攻撃力", skill: "圧制" },
+  { rarity: "☆6", type: "両手剣", name: "昔日の逸品", base: "意志", sub: "HP", skill: "効率" },
+  { rarity: "☆6", type: "両手剣", name: "破砕君王", base: "筋力", sub: "会心率", skill: "破砕" },
+  { rarity: "☆6", type: "長柄武器", name: "負山", base: "敏捷", sub: "物理ダメージ", skill: "効率" },
+  { rarity: "☆6", type: "長柄武器", name: "勇猛", base: "敏捷", sub: "物理ダメージ", skill: "巧技" },
+  { rarity: "☆6", type: "長柄武器", name: "J.E.T.", base: "メイン能力", sub: "攻撃力", skill: "圧制" },
+  { rarity: "☆5", type: "片手剣", name: "鋼鉄余音", base: "敏捷", sub: "物理ダメージ", skill: "巧技" },
+  { rarity: "☆5", type: "片手剣", name: "堅城鋳造者", base: "知性", sub: "必殺リチャージ", skill: "昂揚" },
+  { rarity: "☆5", type: "片手剣", name: "フィンチェイサー3.0", base: "筋力", sub: "寒冷ダメージ", skill: "圧制" },
+  { rarity: "☆5", type: "片手剣", name: "抑止", base: "敏捷", sub: "物理ダメージ", skill: "夜幕" },
+  { rarity: "☆5", type: "片手剣", name: "十二問", base: "敏捷", sub: "攻撃力", skill: "付術" },
+  { rarity: "☆5", type: "片手剣", name: "O.B.J.軽刃", base: "敏捷", sub: "攻撃力", skill: "流回" },
+  { rarity: "☆5", type: "アーツユニット", name: "弔いの詩", base: "知性", sub: "攻撃力", skill: "夜幕" },
+  { rarity: "☆5", type: "アーツユニット", name: "術無", base: "意志", sub: "必殺リチャージ", skill: "昂揚" },
+  { rarity: "☆5", type: "アーツユニット", name: "荒野迷走", base: "知性", sub: "電磁ダメージ", skill: "付術" },
+  { rarity: "☆5", type: "アーツユニット", name: "布教の自由", base: "意志", sub: "回復効率", skill: "治癒" },
+  { rarity: "☆5", type: "アーツユニット", name: "O.B.J.術識", base: "知性", sub: "アーツ強度", skill: "追襲" },
+  { rarity: "☆5", type: "拳銃", name: "作品：衆生", base: "敏捷", sub: "アーツダメージ", skill: "付術" },
+  { rarity: "☆5", type: "拳銃", name: "O.B.J.迅速", base: "敏捷", sub: "必殺リチャージ", skill: "噴発" },
+  { rarity: "☆5", type: "拳銃", name: "合理的決別", base: "筋力", sub: "灼熱ダメージ", skill: "追襲" },
+  { rarity: "☆5", type: "両手剣", name: "探龍", base: "筋力", sub: "必殺リチャージ", skill: "噴発" },
+  { rarity: "☆5", type: "両手剣", name: "千古恒常", base: "筋力", sub: "アーツ強度", skill: "残虐" },
+  { rarity: "☆5", type: "両手剣", name: "最期の声", base: "筋力", sub: "HP", skill: "治癒" },
+  { rarity: "☆5", type: "両手剣", name: "O.B.J.重責", base: "筋力", sub: "HP", skill: "効率" },
+  { rarity: "☆5", type: "長柄武器", name: "正義嵌合", base: "筋力", sub: "必殺リチャージ", skill: "残虐" },
+  { rarity: "☆5", type: "長柄武器", name: "O.B.J.鋭矛", base: "意志", sub: "物理ダメージ", skill: "付術" },
+  { rarity: "☆5", type: "長柄武器", name: "求心の槍", base: "意志", sub: "電磁ダメージ", skill: "圧制" },
+];
+
+const AREAS = {
+  中枢エリア: {
+    base: ["敏捷", "筋力", "意志", "知性", "メイン能力"],
+    sub: ["攻撃力", "灼熱ダメージ", "電磁ダメージ", "寒冷ダメージ", "自然ダメージ", "アーツ強度", "必殺リチャージ", "アーツダメージ"],
+    skill: ["強攻", "圧制", "追襲", "破砕", "巧技", "噴発", "流回", "効率"],
+  },
+  源石研究パーク: {
+    base: ["敏捷", "筋力", "意志", "知性", "メイン能力"],
+    sub: ["攻撃力", "物理ダメージ", "電磁ダメージ", "寒冷ダメージ", "自然ダメージ", "会心率", "必殺リチャージ", "アーツダメージ"],
+    skill: ["圧制", "追襲", "昂揚", "巧技", "付術", "治癒", "切骨", "効率"],
+  },
+  鉱山エリア: {
+    base: ["敏捷", "筋力", "意志", "知性", "メイン能力"],
+    sub: ["HP", "物理ダメージ", "灼熱ダメージ", "寒冷ダメージ", "自然ダメージ", "会心率", "アーツ強度", "回復効率"],
+    skill: ["強攻", "圧制", "巧技", "残虐", "付術", "噴発", "夜幕", "効率"],
+  },
+};
+
+function parseCSV(text) {
+  const lines = text.split("\n").filter(l => l.trim());
+  if (lines.length < 2) return null;
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",").map(c => c.replace(/^"|"$/g, "").trim());
+    if (cols.length >= 6 && cols[2]) {
+      rows.push({ rarity: cols[0], type: cols[1], name: cols[2], base: cols[3], sub: cols[4], skill: cols[5] });
+    }
+  }
+  return rows.length > 0 ? rows : null;
+}
+
+const RC = { "☆6": "#fbbf24", "☆5": "#c084fc", "☆4": "#60a5fa", "☆3": "#6ee7b7" };
+const TI = { 片手剣: "⚔️", 両手剣: "🗡️", 長柄武器: "🔱", 拳銃: "🔫", アーツユニット: "💎" };
+const EC = { base: "#60a5fa", sub: "#34d399", skill: "#f472b6" };
+
+function EffectTag({ label, value, color }) {
+  return <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: color+"15", color, fontWeight: 600, whiteSpace: "nowrap" }}>
+    {label ? label+": " : ""}{value}
+  </span>;
+}
+
+function WeaponCard({ weapon, onClick, selected, compact }) {
+  const c = RC[weapon.rarity] || "#9ca3af";
+  return <button onClick={onClick} style={{
+    display: "flex", alignItems: "center", gap: compact ? 6 : 8,
+    padding: compact ? "5px 8px" : "8px 12px",
+    background: selected ? "rgba(251,191,36,0.12)" : "rgba(255,255,255,0.03)",
+    border: selected ? "1.5px solid #fbbf24" : "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 8, cursor: onClick ? "pointer" : "default", width: "100%", textAlign: "left", transition: "all 0.15s",
+  }}>
+    <span style={{ fontSize: compact ? 13 : 16, flexShrink: 0 }}>{TI[weapon.type] || "🔧"}</span>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <span style={{ color: c, fontWeight: 700, fontSize: compact ? 12 : 13, whiteSpace: "nowrap" }}>
+        {weapon.rarity} {weapon.name}
+      </span>
+      <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
+        <EffectTag value={weapon.base} color={EC.base} />
+        <EffectTag value={weapon.sub} color={EC.sub} />
+        <EffectTag value={weapon.skill} color={EC.skill} />
+      </div>
+    </div>
+  </button>;
+}
+
+function Tag({ label, active, color, onClick }) {
+  return <button onClick={onClick} style={{
+    padding: "3px 10px", borderRadius: 6, fontSize: 12, fontWeight: active ? 700 : 400,
+    border: active ? "1.5px solid "+color : "1px solid rgba(255,255,255,0.12)",
+    background: active ? color+"22" : "transparent",
+    color: active ? color : "#9ca3af", cursor: "pointer", transition: "all 0.15s",
+  }}>{label}</button>;
+}
+
+function DarkSelect({ value, onChange, options, borderColor, placeholder }) {
+  return <select value={value} onChange={onChange} style={{
+    width: "100%", padding: "8px 10px", borderRadius: 8, background: "#141420", color: "#e5e7eb", fontSize: 13,
+    border: "1px solid "+borderColor+"40", appearance: "none", WebkitAppearance: "none",
+    backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M2 4l4 4 4-4'/%3E%3C/svg%3E\")",
+    backgroundRepeat: "no-repeat", backgroundPosition: "right 10px center", cursor: "pointer",
+  }}>
+    <option value="">{placeholder || "-- 選択 --"}</option>
+    {options.map(o => <option key={o} value={o}>{o}</option>)}
+  </select>;
+}
+
+function App() {
+  const [weapons, setWeapons] = useState(FALLBACK_WEAPONS);
+  const [dataSource, setDataSource] = useState("ローカル");
+  const [tab, setTab] = useState("solver");
+  const [selectedWeapon, setSelectedWeapon] = useState(null);
+  const [filterType, setFilterType] = useState("すべて");
+  const [filterRarity, setFilterRarity] = useState("すべて");
+  const [searchText, setSearchText] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const loadFromSheet = () => {
+    setLoading(true);
+    fetch(SPREADSHEET_CSV_URL)
+      .then(r => { if (!r.ok) throw new Error(); return r.text(); })
+      .then(text => {
+        const p = parseCSV(text);
+        if (p) { setWeapons(p); setDataSource("スプレッドシート"); }
+        else { setDataSource("ローカル（CSV解析失敗）"); }
+      })
+      .catch(() => { setDataSource("ローカル（取得失敗）"); })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadFromSheet(); }, []);
+
+  const weaponTypes = useMemo(() => ["すべて", ...new Set(weapons.map(w => w.type))], [weapons]);
+  const rarities = useMemo(() => ["すべて", ...new Set(weapons.map(w => w.rarity))], [weapons]);
+
+  const filteredWeapons = useMemo(() => {
+    return weapons.filter(w => {
+      if (filterType !== "すべて" && w.type !== filterType) return false;
+      if (filterRarity !== "すべて" && w.rarity !== filterRarity) return false;
+      if (searchText && !w.name.toLowerCase().includes(searchText.toLowerCase())) return false;
+      return true;
+    });
+  }, [weapons, filterType, filterRarity, searchText]);
+
+  // Solver
+  const solverResult = useMemo(() => {
+    if (!selectedWeapon) return null;
+    const target = selectedWeapon;
+    const areaResults = Object.entries(AREAS).map(([areaName, area]) => {
+      const canSub = area.sub.includes(target.sub);
+      const canSkill = area.skill.includes(target.skill);
+      if (!canSub && !canSkill) return null;
+      const patterns = [];
+      const otherBases = area.base.filter(b => b !== target.base);
+      const build = (lockType, lockedValue) => {
+        for (let i = 0; i < otherBases.length; i++) {
+          for (let j = i + 1; j < otherBases.length; j++) {
+            const bases = [target.base, otherBases[i], otherBases[j]];
+            const pw = weapons.filter(w => w.name !== target.name).filter(w => {
+              if (!bases.includes(w.base)) return false;
+              return lockType === "スキル効果"
+                ? w.skill === lockedValue && area.sub.includes(w.sub)
+                : w.sub === lockedValue && area.skill.includes(w.skill);
+            });
+            if (pw.length > 0) patterns.push({ lockType, locked: lockedValue, bases, perfectWeapons: pw, score: pw.length });
+          }
+        }
+      };
+      if (canSkill) build("スキル効果", target.skill);
+      if (canSub) build("付加効果", target.sub);
+      patterns.sort((a, b) => b.score - a.score);
+      return { areaName, targetPerfect: canSub && canSkill, patterns: patterns.slice(0, 5) };
+    }).filter(Boolean);
+    areaResults.sort((a, b) => {
+      if (a.targetPerfect !== b.targetPerfect) return b.targetPerfect ? 1 : -1;
+      return (b.patterns[0]?.score || 0) - (a.patterns[0]?.score || 0);
+    });
+    return areaResults;
+  }, [selectedWeapon, weapons]);
+
+  // Fodder
+  const allEffects = useMemo(() => ({
+    bases: [...new Set(weapons.map(w => w.base))],
+    subs: [...new Set(weapons.map(w => w.sub))],
+    skills: [...new Set(weapons.map(w => w.skill))],
+  }), [weapons]);
+  const [fodderBase, setFodderBase] = useState("");
+  const [fodderSub, setFodderSub] = useState("");
+  const [fodderSkill, setFodderSkill] = useState("");
+  const fodderResult = useMemo(() => {
+    if (!fodderBase || !fodderSub || !fodderSkill) return null;
+    const perfect = weapons.filter(w => w.base === fodderBase && w.sub === fodderSub && w.skill === fodderSkill);
+    return { perfect, isFodder: perfect.length === 0 };
+  }, [weapons, fodderBase, fodderSub, fodderSkill]);
+
+  return <div style={{ minHeight: "100vh" }}>
+    {/* Header */}
+    <div style={{ background: "linear-gradient(135deg, #1a1a2e 0%, #0f0f1a 100%)", borderBottom: "1px solid rgba(251,191,36,0.2)", padding: "14px 20px" }}>
+      <div style={{ maxWidth: 960, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <h1 style={{ fontSize: 18, fontWeight: 900, color: "#fbbf24", letterSpacing: 1 }}>⚗️ 基質厳選ツール</h1>
+          <p style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>Endfield Substrate Optimizer</p>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, color: "#4b5563", background: "rgba(255,255,255,0.05)", padding: "2px 8px", borderRadius: 4 }}>
+            {dataSource} ({weapons.length}武器)
+          </span>
+          <button onClick={loadFromSheet} disabled={loading} style={{
+            fontSize: 10, padding: "2px 8px", borderRadius: 4, cursor: loading ? "wait" : "pointer",
+            border: "1px solid rgba(251,191,36,0.3)", background: "rgba(251,191,36,0.1)", color: "#fbbf24", fontWeight: 700,
+          }}>
+            {loading ? "読込中..." : "🔄 データ更新"}
+          </button>
+          <div style={{ display: "flex", gap: 4 }}>
+            <EffectTag label="基礎" value="" color={EC.base} />
+            <EffectTag label="付加" value="" color={EC.sub} />
+            <EffectTag label="スキル" value="" color={EC.skill} />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 16px 40px" }}>
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 4, marginTop: 14, marginBottom: 14, background: "rgba(255,255,255,0.03)", borderRadius: 10, padding: 4 }}>
+        {[{id:"solver",label:"① 同時厳選ソルバー"},{id:"fodder",label:"② 餌判定"}].map(t =>
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            flex: 1, padding: "10px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14,
+            background: tab === t.id ? "linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)" : "transparent",
+            color: tab === t.id ? "#0a0a0f" : "#6b7280",
+          }}>{t.label}</button>
+        )}
+      </div>
+
+      {/* ① Solver */}
+      {tab === "solver" && <div>
+        <h3 style={{ fontSize: 15, fontWeight: 800, color: "#fbbf24", marginBottom: 6 }}>🎯 武器を選択</h3>
+        <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 10 }}>厳選したい武器を選ぶと、最適エリアと同時に3/3で狙える武器を計算します</p>
+
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+          {weaponTypes.map(t => <Tag key={t} label={t === "すべて" ? "すべて" : (TI[t]||"")+" "+t} active={filterType === t} color="#fbbf24" onClick={() => setFilterType(t)} />)}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          {rarities.map(r => <Tag key={r} label={r} active={filterRarity === r} color={RC[r] || "#fbbf24"} onClick={() => setFilterRarity(r)} />)}
+        </div>
+        <input type="text" placeholder="🔍 武器名で検索..." value={searchText} onChange={e => setSearchText(e.target.value)}
+          style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)", color: "#e5e7eb", fontSize: 13, marginBottom: 8, outline: "none" }}
+        />
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 4, maxHeight: selectedWeapon ? 180 : 400, overflowY: "auto", padding: 2 }}>
+          {filteredWeapons.map(w =>
+            <WeaponCard key={w.name} weapon={w} selected={selectedWeapon?.name === w.name}
+              onClick={() => setSelectedWeapon(selectedWeapon?.name === w.name ? null : w)} />
+          )}
+        </div>
+
+        {selectedWeapon && solverResult && <div style={{ marginTop: 20 }}>
+          <div style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 22 }}>{TI[selectedWeapon.type]}</span>
+              <div>
+                <span style={{ fontWeight: 800, fontSize: 16, color: RC[selectedWeapon.rarity] }}>{selectedWeapon.rarity} {selectedWeapon.name}</span>
+                <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                  <EffectTag label="基礎" value={selectedWeapon.base} color={EC.base} />
+                  <EffectTag label="付加" value={selectedWeapon.sub} color={EC.sub} />
+                  <EffectTag label="スキル" value={selectedWeapon.skill} color={EC.skill} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {solverResult.length === 0
+            ? <p style={{ color: "#6b7280", textAlign: "center", padding: 20 }}>この武器の基質をドロップできるエリアが見つかりませんでした</p>
+            : solverResult.map(ar => <div key={ar.areaName} style={{ marginBottom: 16, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ padding: "10px 16px", background: ar.targetPerfect ? "rgba(34,197,94,0.08)" : "rgba(255,255,255,0.02)", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 16 }}>📍</span>
+                <span style={{ fontWeight: 800, fontSize: 15, color: "#e5e7eb" }}>{ar.areaName}</span>
+                {ar.targetPerfect && <span style={{ fontSize: 11, fontWeight: 700, background: "rgba(34,197,94,0.2)", color: "#4ade80", padding: "2px 8px", borderRadius: 4 }}>✦ パーフェクト可能</span>}
+              </div>
+              <div style={{ padding: 14 }}>
+                {ar.patterns.length === 0
+                  ? <p style={{ fontSize: 12, color: "#4b5563" }}>3/3一致で同時に狙える武器なし</p>
+                  : ar.patterns.map((p, pi) => <div key={pi} style={{
+                      marginBottom: pi < ar.patterns.length - 1 ? 14 : 0,
+                      paddingBottom: pi < ar.patterns.length - 1 ? 14 : 0,
+                      borderBottom: pi < ar.patterns.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none",
+                    }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 600 }}>🔒 {p.lockType}:</span>
+                      <span style={{
+                        fontSize: 12, fontWeight: 700,
+                        color: p.lockType === "スキル効果" ? EC.skill : EC.sub,
+                        background: (p.lockType === "スキル効果" ? EC.skill : EC.sub) + "18",
+                        padding: "1px 8px", borderRadius: 4,
+                      }}>{p.locked}</span>
+                      <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 600 }}>基礎:</span>
+                      {p.bases.map((b, bi) => <span key={bi} style={{
+                        fontSize: 12, fontWeight: 700, color: "#e0a040",
+                        background: "rgba(224,160,64,0.15)", padding: "1px 8px", borderRadius: 4,
+                      }}>{b}</span>)}
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#4ade80", background: "rgba(34,197,94,0.12)", padding: "1px 6px", borderRadius: 4 }}>
+                        {p.perfectWeapons.length}武器
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 4 }}>
+                      {p.perfectWeapons.map(w => <WeaponCard key={w.name} weapon={w} compact />)}
+                    </div>
+                  </div>)
+                }
+              </div>
+            </div>)
+          }
+        </div>}
+      </div>}
+
+      {/* ② Fodder */}
+      {tab === "fodder" && <div>
+        <h3 style={{ fontSize: 15, fontWeight: 800, color: "#fbbf24", marginBottom: 6 }}>🗑️ 餌判定チェッカー</h3>
+        <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>基質の3要素を全部入力してください。3つすべて一致する武器がなければ餌確定です</p>
+
+        <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: EC.base, marginBottom: 4, display: "block" }}>基礎効果</label>
+              <DarkSelect value={fodderBase} onChange={e => setFodderBase(e.target.value)} options={allEffects.bases} borderColor={EC.base} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: EC.sub, marginBottom: 4, display: "block" }}>付加効果</label>
+              <DarkSelect value={fodderSub} onChange={e => setFodderSub(e.target.value)} options={allEffects.subs} borderColor={EC.sub} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: EC.skill, marginBottom: 4, display: "block" }}>スキル効果</label>
+              <DarkSelect value={fodderSkill} onChange={e => setFodderSkill(e.target.value)} options={allEffects.skills} borderColor={EC.skill} />
+            </div>
+          </div>
+          {(fodderBase || fodderSub || fodderSkill) &&
+            <button onClick={() => { setFodderBase(""); setFodderSub(""); setFodderSkill(""); }}
+              style={{ marginTop: 10, padding: "4px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "#9ca3af", fontSize: 12, cursor: "pointer" }}>
+              クリア
+            </button>
+          }
+        </div>
+
+        {(!fodderBase || !fodderSub || !fodderSkill) && (fodderBase || fodderSub || fodderSkill) &&
+          <p style={{ fontSize: 12, color: "#6b7280", textAlign: "center", padding: 12 }}>3要素すべて選択すると判定します</p>
+        }
+
+        {fodderResult && (fodderResult.isFodder
+          ? <div style={{ textAlign: "center", padding: "24px 16px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 12 }}>
+              <span style={{ fontSize: 32 }}>🗑️</span>
+              <p style={{ fontSize: 16, fontWeight: 800, color: "#ef4444", margin: "8px 0 4px" }}>餌確定！</p>
+              <p style={{ fontSize: 13, color: "#9ca3af" }}>この組み合わせに完全一致する武器はありません。安心して食わせましょう</p>
+            </div>
+          : <div>
+              <div style={{ padding: "12px 16px", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 12, marginBottom: 12, textAlign: "center" }}>
+                <p style={{ fontSize: 14, fontWeight: 700, color: "#fbbf24" }}>⚠️ 完全一致する武器あり！取っておいた方がいいかも</p>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 4 }}>
+                {fodderResult.perfect.map(w => <WeaponCard key={w.name} weapon={w} />)}
+              </div>
+            </div>
+        )}
+      </div>}
+    </div>
+  </div>;
+}
+
+ReactDOM.render(<App />, document.getElementById("root"));
+</script>
+</body>
+</html>
