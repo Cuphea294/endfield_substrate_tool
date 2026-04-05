@@ -24,10 +24,11 @@
 <script type="text/babel">
 const { useState, useEffect, useMemo } = React;
 
-const SPREADSHEET_CSV_URL =
-  "https://docs.google.com/spreadsheets/d/1-rBffU6yb1vybRvLMpIvpzi-YKvY-j7ML3FPuMJkuhQ/export?format=csv";
+const SHEET_ID = "1-rBffU6yb1vybRvLMpIvpzi-YKvY-j7ML3FPuMJkuhQ";
+const WEAPON_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
+const AREA_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=1319907973`;
 
-// フォールバック: スプシと同じ表記（UP付き）
+// フォールバック武器データ
 const FALLBACK_WEAPONS = [
   { rarity: "☆6", type: "片手剣", name: "フレイムフォージ", base: "知性UP", sub: "攻撃力UP", skill: "夜幕" },
   { rarity: "☆6", type: "片手剣", name: "大願", base: "敏捷UP", sub: "攻撃力UP", skill: "付術" },
@@ -40,7 +41,7 @@ const FALLBACK_WEAPONS = [
   { rarity: "☆6", type: "アーツユニット", name: "破壊ユニット", base: "メイン能力UP", sub: "アーツ強度UP", skill: "噴発" },
   { rarity: "☆6", type: "アーツユニット", name: "蒼星の囁き", base: "知性UP", sub: "回復効率UP", skill: "付術" },
   { rarity: "☆6", type: "アーツユニット", name: "騎士精神", base: "意志UP", sub: "HPアップ", skill: "治癒" },
-  { rarity: "☆6", type: "アーツユニット", name: "使命必達", base: "意志UP", sub: "必殺リチャージUP", skill: "追襲" },
+  { rarity: "☆6", type: "アーツユニット", name: "使命必達", base: "意志UP", sub: "必殺技効率UP", skill: "追襲" },
   { rarity: "☆6", type: "アーツユニット", name: "遺忘", base: "知性UP", sub: "アーツダメージUP", skill: "夜幕" },
   { rarity: "☆6", type: "アーツユニット", name: "作品：蝕跡", base: "意志UP", sub: "自然ダメージUP", skill: "圧制" },
   { rarity: "☆6", type: "拳銃", name: "芸術の独裁者", base: "知性UP", sub: "会心率UP", skill: "切骨" },
@@ -56,38 +57,38 @@ const FALLBACK_WEAPONS = [
   { rarity: "☆6", type: "長柄武器", name: "勇猛", base: "敏捷UP", sub: "物理ダメージUP", skill: "巧技" },
   { rarity: "☆6", type: "長柄武器", name: "J.E.T.", base: "メイン能力UP", sub: "攻撃力UP", skill: "圧制" },
   { rarity: "☆5", type: "片手剣", name: "鋼鉄余音", base: "敏捷UP", sub: "物理ダメージUP", skill: "巧技" },
-  { rarity: "☆5", type: "片手剣", name: "堅城鋳造者", base: "知性UP", sub: "必殺リチャージUP", skill: "昂揚" },
+  { rarity: "☆5", type: "片手剣", name: "堅城鋳造者", base: "知性UP", sub: "必殺技効率UP", skill: "昂揚" },
   { rarity: "☆5", type: "片手剣", name: "フィンチェイサー3.0", base: "筋力UP", sub: "寒冷ダメージUP", skill: "圧制" },
   { rarity: "☆5", type: "片手剣", name: "抑止", base: "敏捷UP", sub: "物理ダメージUP", skill: "夜幕" },
   { rarity: "☆5", type: "片手剣", name: "十二問", base: "敏捷UP", sub: "攻撃力UP", skill: "付術" },
   { rarity: "☆5", type: "片手剣", name: "O.B.J.軽刃", base: "敏捷UP", sub: "攻撃力UP", skill: "流回" },
   { rarity: "☆5", type: "アーツユニット", name: "弔いの詩", base: "知性UP", sub: "攻撃力UP", skill: "夜幕" },
-  { rarity: "☆5", type: "アーツユニット", name: "術無", base: "意志UP", sub: "必殺リチャージUP", skill: "昂揚" },
+  { rarity: "☆5", type: "アーツユニット", name: "術無", base: "意志UP", sub: "必殺技効率UP", skill: "昂揚" },
   { rarity: "☆5", type: "アーツユニット", name: "荒野迷走", base: "知性UP", sub: "電磁ダメージUP", skill: "付術" },
   { rarity: "☆5", type: "アーツユニット", name: "布教の自由", base: "意志UP", sub: "回復効率UP", skill: "治癒" },
   { rarity: "☆5", type: "アーツユニット", name: "O.B.J.術識", base: "知性UP", sub: "アーツ強度UP", skill: "追襲" },
   { rarity: "☆5", type: "拳銃", name: "作品：衆生", base: "敏捷UP", sub: "アーツダメージUP", skill: "付術" },
-  { rarity: "☆5", type: "拳銃", name: "O.B.J.迅速", base: "敏捷UP", sub: "必殺リチャージUP", skill: "噴発" },
+  { rarity: "☆5", type: "拳銃", name: "O.B.J.迅速", base: "敏捷UP", sub: "必殺技効率UP", skill: "噴発" },
   { rarity: "☆5", type: "拳銃", name: "合理的決別", base: "筋力UP", sub: "灼熱ダメージUP", skill: "追襲" },
-  { rarity: "☆5", type: "両手剣", name: "探龍", base: "筋力UP", sub: "必殺リチャージUP", skill: "噴発" },
+  { rarity: "☆5", type: "両手剣", name: "探龍", base: "筋力UP", sub: "必殺技効率UP", skill: "噴発" },
   { rarity: "☆5", type: "両手剣", name: "千古恒常", base: "筋力UP", sub: "アーツ強度UP", skill: "残虐" },
   { rarity: "☆5", type: "両手剣", name: "最期の声", base: "筋力UP", sub: "HPアップ", skill: "治癒" },
   { rarity: "☆5", type: "両手剣", name: "O.B.J.重責", base: "筋力UP", sub: "HPアップ", skill: "効率" },
-  { rarity: "☆5", type: "長柄武器", name: "正義嵌合", base: "筋力UP", sub: "必殺リチャージUP", skill: "残虐" },
+  { rarity: "☆5", type: "長柄武器", name: "正義嵌合", base: "筋力UP", sub: "必殺技効率UP", skill: "残虐" },
   { rarity: "☆5", type: "長柄武器", name: "O.B.J.鋭矛", base: "意志UP", sub: "物理ダメージUP", skill: "付術" },
   { rarity: "☆5", type: "長柄武器", name: "求心の槍", base: "意志UP", sub: "電磁ダメージUP", skill: "圧制" },
 ];
 
-// エリアマスタ: スプシと同じ表記（UP付き）
-const AREAS = {
+// フォールバックエリアデータ
+const FALLBACK_AREAS = {
   中枢エリア: {
     base: ["敏捷UP", "筋力UP", "意志UP", "知性UP", "メイン能力UP"],
-    sub: ["攻撃力UP", "灼熱ダメージUP", "電磁ダメージUP", "寒冷ダメージUP", "自然ダメージUP", "アーツ強度UP", "必殺リチャージUP", "アーツダメージUP"],
+    sub: ["攻撃力UP", "灼熱ダメージUP", "電磁ダメージUP", "寒冷ダメージUP", "自然ダメージUP", "アーツ強度UP", "必殺技効率UP", "アーツダメージUP"],
     skill: ["強攻", "圧制", "追襲", "破砕", "巧技", "噴発", "流回", "効率"],
   },
   源石研究パーク: {
     base: ["敏捷UP", "筋力UP", "意志UP", "知性UP", "メイン能力UP"],
-    sub: ["攻撃力UP", "物理ダメージUP", "電磁ダメージUP", "寒冷ダメージUP", "自然ダメージUP", "会心率UP", "必殺リチャージUP", "アーツダメージUP"],
+    sub: ["攻撃力UP", "物理ダメージUP", "電磁ダメージUP", "寒冷ダメージUP", "自然ダメージUP", "会心率UP", "必殺技効率UP", "アーツダメージUP"],
     skill: ["圧制", "追襲", "昂揚", "巧技", "付術", "治癒", "切骨", "効率"],
   },
   鉱山エリア: {
@@ -97,7 +98,8 @@ const AREAS = {
   },
 };
 
-function parseCSV(text) {
+// CSV パーサー
+function parseWeaponCSV(text) {
   const lines = text.split("\n").filter(l => l.trim());
   if (lines.length < 2) return null;
   const rows = [];
@@ -108,6 +110,25 @@ function parseCSV(text) {
     }
   }
   return rows.length > 0 ? rows : null;
+}
+
+// エリアCSVパーサー: エリア名,効果種別,効果名 → { エリア名: { base:[], sub:[], skill:[] } }
+function parseAreaCSV(text) {
+  const lines = text.split("\n").filter(l => l.trim());
+  if (lines.length < 2) return null;
+  const areas = {};
+  const typeMap = { "基礎効果": "base", "付加効果": "sub", "スキル効果": "skill" };
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",").map(c => c.replace(/^"|"$/g, "").trim());
+    if (cols.length >= 3 && cols[0] && cols[1] && cols[2]) {
+      const areaName = cols[0];
+      const key = typeMap[cols[1]];
+      if (!key) continue;
+      if (!areas[areaName]) areas[areaName] = { base: [], sub: [], skill: [] };
+      areas[areaName][key].push(cols[2]);
+    }
+  }
+  return Object.keys(areas).length > 0 ? areas : null;
 }
 
 const RC = { "☆6": "#fbbf24", "☆5": "#c084fc", "☆4": "#60a5fa", "☆3": "#6ee7b7" };
@@ -166,7 +187,9 @@ function DarkSelect({ value, onChange, options, borderColor, placeholder }) {
 
 function App() {
   const [weapons, setWeapons] = useState(FALLBACK_WEAPONS);
-  const [dataSource, setDataSource] = useState("ローカル");
+  const [areas, setAreas] = useState(FALLBACK_AREAS);
+  const [weaponSource, setWeaponSource] = useState("ローカル");
+  const [areaSource, setAreaSource] = useState("ローカル");
   const [tab, setTab] = useState("solver");
   const [selectedWeapon, setSelectedWeapon] = useState(null);
   const [filterType, setFilterType] = useState("すべて");
@@ -176,18 +199,31 @@ function App() {
 
   const loadFromSheet = () => {
     setLoading(true);
-    fetch(SPREADSHEET_CSV_URL)
-      .then(r => { if (!r.ok) throw new Error(); return r.text(); })
-      .then(text => {
-        const p = parseCSV(text);
-        if (p) { setWeapons(p); setDataSource("スプレッドシート"); }
-        else { setDataSource("ローカル（CSV解析失敗）"); }
-      })
-      .catch(() => { setDataSource("ローカル（取得失敗）"); })
-      .finally(() => setLoading(false));
+    const wReq = fetch(WEAPON_CSV_URL).then(r => { if (!r.ok) throw new Error(); return r.text(); });
+    const aReq = fetch(AREA_CSV_URL).then(r => { if (!r.ok) throw new Error(); return r.text(); });
+
+    Promise.allSettled([wReq, aReq]).then(([wRes, aRes]) => {
+      if (wRes.status === "fulfilled") {
+        const p = parseWeaponCSV(wRes.value);
+        if (p) { setWeapons(p); setWeaponSource("スプレッドシート"); }
+        else { setWeaponSource("ローカル（解析失敗）"); }
+      } else { setWeaponSource("ローカル（取得失敗）"); }
+
+      if (aRes.status === "fulfilled") {
+        const p = parseAreaCSV(aRes.value);
+        if (p) { setAreas(p); setAreaSource("スプレッドシート"); }
+        else { setAreaSource("ローカル（解析失敗）"); }
+      } else { setAreaSource("ローカル（取得失敗）"); }
+    }).finally(() => setLoading(false));
   };
 
   useEffect(() => { loadFromSheet(); }, []);
+
+  const dataLabel = useMemo(() => {
+    if (weaponSource === "スプレッドシート" && areaSource === "スプレッドシート") return "スプレッドシート";
+    if (weaponSource === "スプレッドシート" || areaSource === "スプレッドシート") return "一部スプレッドシート";
+    return "ローカル";
+  }, [weaponSource, areaSource]);
 
   const weaponTypes = useMemo(() => ["すべて", ...new Set(weapons.map(w => w.type))], [weapons]);
   const rarities = useMemo(() => ["すべて", ...new Set(weapons.map(w => w.rarity))], [weapons]);
@@ -205,7 +241,7 @@ function App() {
   const solverResult = useMemo(() => {
     if (!selectedWeapon) return null;
     const target = selectedWeapon;
-    const areaResults = Object.entries(AREAS).map(([areaName, area]) => {
+    const areaResults = Object.entries(areas).map(([areaName, area]) => {
       const canSub = area.sub.includes(target.sub);
       const canSkill = area.skill.includes(target.skill);
       if (!canSub && !canSkill) return null;
@@ -235,7 +271,7 @@ function App() {
       return (b.patterns[0]?.score || 0) - (a.patterns[0]?.score || 0);
     });
     return areaResults;
-  }, [selectedWeapon, weapons]);
+  }, [selectedWeapon, weapons, areas]);
 
   // Fodder
   const allEffects = useMemo(() => ({
@@ -262,7 +298,7 @@ function App() {
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: 10, color: "#4b5563", background: "rgba(255,255,255,0.05)", padding: "2px 8px", borderRadius: 4 }}>
-            {dataSource} ({weapons.length}武器)
+            {dataLabel} ({weapons.length}武器 / {Object.keys(areas).length}エリア)
           </span>
           <button onClick={loadFromSheet} disabled={loading} style={{
             fontSize: 10, padding: "2px 8px", borderRadius: 4, cursor: loading ? "wait" : "pointer",
