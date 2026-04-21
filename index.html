@@ -234,16 +234,19 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
       streamRef.current = stream;
       stream.getVideoTracks()[0].addEventListener('ended', stopCapture);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play().catch(() => {});
-      }
       setIsCapturing(true);
       setStatus("カードの効果3行部分をドラッグして選択してください");
     } catch {
       setStatus("キャプチャをキャンセルしました");
     }
   };
+
+  useEffect(() => {
+    if (isCapturing && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [isCapturing]);
 
   const getPos = (e) => {
     const r = overlayRef.current.getBoundingClientRect();
