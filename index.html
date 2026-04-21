@@ -132,19 +132,28 @@ const RC = { "☆6": "#fbbf24", "☆5": "#c084fc", "☆4": "#60a5fa", "☆3": "#
 const TI = { 片手剣: "⚔️", 両手剣: "🗡️", 長柄武器: "🔱", 拳銃: "🔫", アーツユニット: "💎" };
 const EC = { base: "#60a5fa", sub: "#34d399", skill: "#f472b6" };
 
-// OCR fuzzy matching: count how many chars in `ocr` appear in `candidate`
-function charSim(ocr, candidate) {
-  if (ocr === candidate) return 1;
-  if (!ocr || !candidate) return 0;
-  let matches = 0;
-  for (const c of ocr) if (candidate.includes(c)) matches++;
-  return matches / Math.max(ocr.length, candidate.length);
+// Levenshtein距離ベースの類似度（文字の順序・編集距離を考慮）
+function simScore(a, b) {
+  if (a === b) return 1;
+  if (!a || !b) return 0;
+  const m = a.length, n = b.length;
+  const row = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = row[j];
+      row[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, row[j], row[j - 1]);
+      prev = tmp;
+    }
+  }
+  return 1 - row[n] / Math.max(m, n);
 }
 
-function bestMatch(line, list, threshold = 0.5) {
+function bestMatch(line, list, threshold = 0.45) {
   let best = null, bestScore = 0;
   for (const item of list) {
-    const score = charSim(line, item);
+    const score = simScore(line, item);
     if (score > bestScore) { bestScore = score; best = item; }
   }
   return bestScore >= threshold ? { value: best, score: bestScore } : null;
@@ -227,12 +236,25 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       await video.play();
       await new Promise(resolve => setTimeout(resolve, 150));
 
-      // 左半分だけ切り取って右パネルのテキスト混入を防ぐ
-      const c = canvasRef.current;
+      // 左半分だけ切り取って右パネルのテキスト混入を防ぐ、2倍に拡大してOCR精度を上げる
       const cropW = Math.round(video.videoWidth * 0.5);
-      c.width = cropW;
-      c.height = video.videoHeight;
-      c.getContext('2d').drawImage(video, 0, 0, cropW, video.videoHeight, 0, 0, cropW, video.videoHeight);
+      const cropH = video.videoHeight;
+      const scale = 2;
+      const c = canvasRef.current;
+      c.width  = cropW * scale;
+      c.height = cropH * scale;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(video, 0, 0, cropW, cropH, 0, 0, c.width, c.height);
+
+      // グレースケール化＋閾値処理: 白文字(明)→黒、金背景(暗)→白 でTesseractが読みやすくなる
+      const imgData = ctx.getImageData(0, 0, c.width, c.height);
+      const d = imgData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        const val  = gray > 210 ? 0 : 255; // 白文字→黒、背景→白
+        d[i] = d[i + 1] = d[i + 2] = val;
+      }
+      ctx.putImageData(imgData, 0, 0);
 
       if (!workerRef.current) {
         setStatus("言語データ読み込み中（初回のみ）...");
