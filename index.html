@@ -227,10 +227,12 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       await video.play();
       await new Promise(resolve => setTimeout(resolve, 150));
 
+      // 左半分だけ切り取って右パネルのテキスト混入を防ぐ
       const c = canvasRef.current;
-      c.width = video.videoWidth;
+      const cropW = Math.round(video.videoWidth * 0.5);
+      c.width = cropW;
       c.height = video.videoHeight;
-      c.getContext('2d').drawImage(video, 0, 0);
+      c.getContext('2d').drawImage(video, 0, 0, cropW, video.videoHeight, 0, 0, cropW, video.videoHeight);
 
       if (!workerRef.current) {
         setStatus("言語データ読み込み中（初回のみ）...");
@@ -238,6 +240,7 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       }
       setStatus("OCR処理中...");
       const { data: { text } } = await workerRef.current.recognize(c);
+      setStatus("解析中... (OCR raw: " + text.replace(/\n/g, '|').slice(0, 120) + ")");
       parseOCR(text);
     } catch (e) {
       const msg = e?.message || '';
@@ -251,18 +254,19 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
   const parseOCR = (rawText) => {
     const lines = rawText.split('\n')
       .map(l => l
-        .replace(/^[○◦・°\s]+/, '')
-        .replace(/\s*[|｜]\s*[+＋]\d.*$/, '')
-        .replace(/[+＋]\d.*$/, '')
+        .replace(/^[○◦・°o\s]+/, '')   // 先頭の記号・空白
+        .replace(/[✏✎🖊].*/g, '')       // ✏以降を除去
+        .replace(/\s*[|｜]\s*[+＋]\d.*$/, '') // | +1 を除去
+        .replace(/[+＋]\d.*$/, '')       // +1 を除去
         .trim()
       )
       .filter(l => l.length >= 2);
 
-    // 各行を効果リストとマッチング
+    // 各行を効果リストにマッチング（閾値0.4）
     const tagged = lines.map(line => {
-      const bm = bestMatch(line, allEffects.bases);
-      const sm = bestMatch(line, allEffects.subs);
-      const km = bestMatch(line, allEffects.skills);
+      const bm = bestMatch(line, allEffects.bases,  0.4);
+      const sm = bestMatch(line, allEffects.subs,   0.4);
+      const km = bestMatch(line, allEffects.skills, 0.4);
       const candidates = [
         bm ? { ...bm, type: 'base'  } : null,
         sm ? { ...sm, type: 'sub'   } : null,
@@ -271,11 +275,11 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       return candidates.length ? candidates[0] : null;
     });
 
-    // 連続する3行でbase+sub+skillが揃う箇所を探す
-    for (let i = 0; i <= tagged.length - 3; i++) {
-      const w = tagged.slice(i, i + 3);
-      if (!w.every(Boolean)) continue;
-      const types = w.map(x => x.type);
+    // null を除外した配列でスライディングウィンドウ
+    const nonNull = tagged.filter(Boolean);
+    for (let i = 0; i <= nonNull.length - 3; i++) {
+      const w = nonNull.slice(i, i + 3);
+      const types  = w.map(x => x.type);
       const values = w.map(x => x.value);
       if (new Set(types).size === 3 && new Set(values).size === 3) {
         const result = {
@@ -290,7 +294,7 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
     }
 
     // イレギュラーパターン判定（フォールバック）
-    const unique = [...new Map(tagged.filter(Boolean).map(m => [m.value, m])).values()];
+    const unique = [...new Map(nonNull.map(m => [m.value, m])).values()];
     const bases  = unique.filter(m => m.type === 'base');
     const subs   = unique.filter(m => m.type === 'sub');
     const skills = unique.filter(m => m.type === 'skill');
@@ -298,7 +302,7 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       onIrregular();
       setStatus(`イレギュラー検出 (基礎×${bases.length} 付加×${subs.length} スキル×${skills.length}) → 餌確定`);
     } else {
-      setStatus("読み取り失敗。基質カードを表示した状態でもう一度試してください");
+      setStatus("読み取り失敗。OCR: " + rawText.replace(/\n/g, ' ').slice(0, 100));
     }
   };
 
