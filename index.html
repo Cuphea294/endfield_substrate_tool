@@ -228,11 +228,13 @@ function DarkSelect({ value, onChange, options, borderColor, placeholder }) {
 }
 
 const CROP_PRESETS = [
-  { label: "左33%", x: 0,    w: 0.33 },
-  { label: "左50%", x: 0,    w: 0.50 },
-  { label: "中央",  x: 0.25, w: 0.50 },
-  { label: "右50%", x: 0.50, w: 0.50 },
-  { label: "全体",  x: 0,    w: 1.00 },
+  { label: "左33%",      x: 0,    w: 0.33, y: 0, h: 1.00 },
+  { label: "左50%",      x: 0,    w: 0.50, y: 0, h: 1.00 },
+  { label: "中央",       x: 0.25, w: 0.50, y: 0, h: 1.00 },
+  { label: "右50%",      x: 0.50, w: 0.50, y: 0, h: 1.00 },
+  { label: "全体",       x: 0,    w: 1.00, y: 0, h: 1.00 },
+  { label: "左33%↑85%", x: 0,    w: 0.33, y: 0, h: 0.85 },
+  { label: "左50%↑85%", x: 0,    w: 0.50, y: 0, h: 0.85 },
 ];
 
 function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
@@ -241,7 +243,7 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [status, setStatus] = useState("");
   const [debugImg, setDebugImg] = useState(null);
-  const [cropIdx, setCropIdx] = useState(0);
+  const [cropIdx, setCropIdx] = useState(5);
 
   useEffect(() => {
     return () => { if (workerRef.current) workerRef.current.terminate(); };
@@ -266,14 +268,16 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       await new Promise(resolve => setTimeout(resolve, 150));
 
       const preset = CROP_PRESETS[cropIdx];
-      const srcX  = Math.round(video.videoWidth * preset.x);
-      const srcW  = Math.round(video.videoWidth * preset.w);
-      const srcH  = video.videoHeight;
-      const scale = Math.min(2, 1400 / srcW);
+      const srcX = Math.round(video.videoWidth  * preset.x);
+      const srcW = Math.round(video.videoWidth  * preset.w);
+      const srcY = Math.round(video.videoHeight * preset.y);
+      const srcH = Math.round(video.videoHeight * preset.h);
+      // 3倍スケールで小さな文字も精度よく読む（上限2100px）
+      const scale = Math.min(3, 2100 / srcW);
       const c = canvasRef.current;
       c.width  = Math.round(srcW * scale);
       c.height = Math.round(srcH * scale);
-      c.getContext('2d').drawImage(video, srcX, 0, srcW, srcH, 0, 0, c.width, c.height);
+      c.getContext('2d').drawImage(video, srcX, srcY, srcW, srcH, 0, 0, c.width, c.height);
 
       // 白テキスト抽出フィルター適用（ゲームUIの黄色背景などのノイズを除去）
       applyWhiteTextFilter(c);
@@ -282,9 +286,9 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       if (!workerRef.current) {
         setStatus("言語データ読み込み中（初回のみ）...");
         workerRef.current = await Tesseract.createWorker('jpn');
-        // PSM 11: SPARSE_TEXT - レイアウト無視でテキストを探す
-        await workerRef.current.setParameters({ tessedit_pageseg_mode: '11' });
       }
+      // PSM 11: SPARSE_TEXT - レイアウト無視でテキストを探す（毎回設定）
+      await workerRef.current.setParameters({ tessedit_pageseg_mode: '11' });
       setStatus("OCR処理中...");
       const { data: { text } } = await workerRef.current.recognize(c);
       setStatus("解析中... OCR: " + text.replace(/\n/g, '|').slice(0, 150));
