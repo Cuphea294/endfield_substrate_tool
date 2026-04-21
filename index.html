@@ -236,25 +236,14 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       await video.play();
       await new Promise(resolve => setTimeout(resolve, 150));
 
-      // 左半分だけ切り取って右パネルのテキスト混入を防ぐ、2倍に拡大してOCR精度を上げる
-      const cropW = Math.round(video.videoWidth * 0.5);
+      // 左33%に絞って中央パネルの混入を防ぐ、2倍拡大でOCR精度を上げる
+      const cropW = Math.round(video.videoWidth * 0.33);
       const cropH = video.videoHeight;
       const scale = 2;
       const c = canvasRef.current;
       c.width  = cropW * scale;
       c.height = cropH * scale;
-      const ctx = c.getContext('2d');
-      ctx.drawImage(video, 0, 0, cropW, cropH, 0, 0, c.width, c.height);
-
-      // グレースケール化＋閾値処理: 白文字(明)→黒、金背景(暗)→白 でTesseractが読みやすくなる
-      const imgData = ctx.getImageData(0, 0, c.width, c.height);
-      const d = imgData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        const val  = gray > 210 ? 0 : 255; // 白文字→黒、背景→白
-        d[i] = d[i + 1] = d[i + 2] = val;
-      }
-      ctx.putImageData(imgData, 0, 0);
+      c.getContext('2d').drawImage(video, 0, 0, cropW, cropH, 0, 0, c.width, c.height);
 
       if (!workerRef.current) {
         setStatus("言語データ読み込み中（初回のみ）...");
@@ -276,19 +265,27 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
   const parseOCR = (rawText) => {
     const lines = rawText.split('\n')
       .map(l => l
-        .replace(/^[○◦・°o\s]+/, '')   // 先頭の記号・空白
-        .replace(/[✏✎🖊].*/g, '')       // ✏以降を除去
-        .replace(/\s*[|｜]\s*[+＋]\d.*$/, '') // | +1 を除去
-        .replace(/[+＋]\d.*$/, '')       // +1 を除去
+        .replace(/^[○◦・°o\s]+/, '')
+        .replace(/[✏✎🖊].*/g, '')
+        .replace(/\s*[|｜]\s*[+＋]\d.*$/, '')
+        .replace(/[+＋]\d.*$/, '')
+        .replace(/\s+/g, '')   // スペース除去（OCRが「知性 UP」と分割するケア）
         .trim()
       )
       .filter(l => l.length >= 2);
 
-    // 各行を効果リストにマッチング（閾値0.4）
+    // 各行を効果リストにマッチング
     const tagged = lines.map(line => {
-      const bm = bestMatch(line, allEffects.bases,  0.4);
-      const sm = bestMatch(line, allEffects.subs,   0.4);
-      const km = bestMatch(line, allEffects.skills, 0.4);
+      // まず完全一致の部分文字列検索（最優先）
+      for (const [list, type] of [[allEffects.bases,'base'],[allEffects.subs,'sub'],[allEffects.skills,'skill']]) {
+        for (const effect of list) {
+          if (line.includes(effect)) return { value: effect, type, score: 1.0 };
+        }
+      }
+      // フォールバック: Levenshtein類似度
+      const bm = bestMatch(line, allEffects.bases);
+      const sm = bestMatch(line, allEffects.subs);
+      const km = bestMatch(line, allEffects.skills);
       const candidates = [
         bm ? { ...bm, type: 'base'  } : null,
         sm ? { ...sm, type: 'sub'   } : null,
