@@ -201,98 +201,36 @@ function DarkSelect({ value, onChange, options, borderColor, placeholder }) {
 }
 
 function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
-  const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const overlayRef = useRef(null);
   const workerRef = useRef(null);
-  const streamRef = useRef(null);
-
-  const [isCapturing, setIsCapturing] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [cropRect, setCropRect] = useState(null);
-  const [drag, setDrag] = useState(null);
   const [status, setStatus] = useState("");
 
   useEffect(() => {
-    return () => {
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-      if (workerRef.current) workerRef.current.terminate();
-    };
+    return () => { if (workerRef.current) workerRef.current.terminate(); };
   }, []);
 
-  const stopCapture = () => {
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setIsCapturing(false);
-    setCropRect(null);
-    setDrag(null);
-    setStatus("");
-  };
-
-  const startCapture = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-      streamRef.current = stream;
-      stream.getVideoTracks()[0].addEventListener('ended', stopCapture);
-      setIsCapturing(true);
-      setStatus("カードの効果3行部分をドラッグして選択してください");
-    } catch {
-      setStatus("キャプチャをキャンセルしました");
-    }
-  };
-
-  useEffect(() => {
-    if (isCapturing && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(() => {});
-    }
-  }, [isCapturing]);
-
-  const getPos = (e) => {
-    const r = overlayRef.current.getBoundingClientRect();
-    return {
-      x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
-      y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
-    };
-  };
-
-  const onMouseDown = (e) => {
-    e.preventDefault();
-    const p = getPos(e);
-    setDrag({ sx: p.x, sy: p.y, cx: p.x, cy: p.y });
-  };
-  const onMouseMove = (e) => {
-    if (!drag) return;
-    e.preventDefault();
-    const p = getPos(e);
-    setDrag(d => ({ ...d, cx: p.x, cy: p.y }));
-  };
-  const onMouseUp = (e) => {
-    if (!drag) return;
-    const p = getPos(e);
-    const x = Math.min(drag.sx, p.x), y = Math.min(drag.sy, p.y);
-    const w = Math.abs(p.x - drag.sx), h = Math.abs(p.y - drag.sy);
-    if (w > 0.01 && h > 0.01) {
-      setCropRect({ x, y, w, h });
-      setStatus("範囲選択済み。「読み取る」を押してください");
-    }
-    setDrag(null);
-  };
-
-  const recognize = async () => {
-    if (!videoRef.current || !isCapturing) return;
+  const captureAndRead = async () => {
     setIsAnalyzing(true);
+    setStatus("共有する画面を選択してください...");
+    let stream = null;
     try {
-      const v = videoRef.current;
-      const vw = v.videoWidth || 1920, vh = v.videoHeight || 1080;
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      setStatus("フレームを取得中...");
+
+      const video = Object.assign(document.createElement('video'), { muted: true });
+      video.srcObject = stream;
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = resolve;
+        setTimeout(reject, 8000);
+      });
+      await video.play();
+      await new Promise(resolve => setTimeout(resolve, 150));
+
       const c = canvasRef.current;
-      let sx = 0, sy = 0, sw = vw, sh = vh;
-      if (cropRect) {
-        sx = Math.round(cropRect.x * vw); sy = Math.round(cropRect.y * vh);
-        sw = Math.round(cropRect.w * vw); sh = Math.round(cropRect.h * vh);
-      }
-      c.width = sw; c.height = sh;
-      c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, sw, sh);
+      c.width = video.videoWidth;
+      c.height = video.videoHeight;
+      c.getContext('2d').drawImage(video, 0, 0);
 
       if (!workerRef.current) {
         setStatus("言語データ読み込み中（初回のみ）...");
@@ -302,8 +240,10 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       const { data: { text } } = await workerRef.current.recognize(c);
       parseOCR(text);
     } catch (e) {
-      setStatus("エラー: " + (e.message || String(e)));
+      const msg = e?.message || '';
+      setStatus(msg ? "エラー: " + msg : "キャプチャをキャンセルしました");
     } finally {
+      if (stream) stream.getTracks().forEach(t => t.stop());
       setIsAnalyzing(false);
     }
   };
@@ -318,9 +258,8 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       )
       .filter(l => l.length >= 2);
 
-    const results = [];
-    const usedValues = new Set();
-    for (const line of lines) {
+    // 各行を効果リストとマッチング
+    const tagged = lines.map(line => {
       const bm = bestMatch(line, allEffects.bases);
       const sm = bestMatch(line, allEffects.subs);
       const km = bestMatch(line, allEffects.skills);
@@ -329,42 +268,39 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
         sm ? { ...sm, type: 'sub'   } : null,
         km ? { ...km, type: 'skill' } : null,
       ].filter(Boolean).sort((a, b) => b.score - a.score);
-      if (!candidates.length) continue;
-      const winner = candidates[0];
-      if (!usedValues.has(winner.value)) {
-        usedValues.add(winner.value);
-        results.push(winner);
+      return candidates.length ? candidates[0] : null;
+    });
+
+    // 連続する3行でbase+sub+skillが揃う箇所を探す
+    for (let i = 0; i <= tagged.length - 3; i++) {
+      const w = tagged.slice(i, i + 3);
+      if (!w.every(Boolean)) continue;
+      const types = w.map(x => x.type);
+      const values = w.map(x => x.value);
+      if (new Set(types).size === 3 && new Set(values).size === 3) {
+        const result = {
+          base:  w.find(x => x.type === 'base').value,
+          sub:   w.find(x => x.type === 'sub').value,
+          skill: w.find(x => x.type === 'skill').value,
+        };
+        onDetected(result);
+        setStatus(`完了: ${result.base} / ${result.sub} / ${result.skill}`);
+        return;
       }
     }
 
-    const bases  = results.filter(r => r.type === 'base');
-    const subs   = results.filter(r => r.type === 'sub');
-    const skills = results.filter(r => r.type === 'skill');
-
-    if (results.length < 3) {
-      setStatus(`読み取り失敗（${results.length}件検出）。範囲を再選択してください`);
-      return;
-    }
-    if (bases.length !== 1 || subs.length !== 1 || skills.length !== 1) {
+    // イレギュラーパターン判定（フォールバック）
+    const unique = [...new Map(tagged.filter(Boolean).map(m => [m.value, m])).values()];
+    const bases  = unique.filter(m => m.type === 'base');
+    const subs   = unique.filter(m => m.type === 'sub');
+    const skills = unique.filter(m => m.type === 'skill');
+    if (unique.length >= 3 && (bases.length !== 1 || subs.length !== 1 || skills.length !== 1)) {
       onIrregular();
       setStatus(`イレギュラー検出 (基礎×${bases.length} 付加×${subs.length} スキル×${skills.length}) → 餌確定`);
-      return;
+    } else {
+      setStatus("読み取り失敗。基質カードを表示した状態でもう一度試してください");
     }
-    const detected = { base: bases[0].value, sub: subs[0].value, skill: skills[0].value };
-    onDetected(detected);
-    setStatus(`完了: ${detected.base} / ${detected.sub} / ${detected.skill}`);
   };
-
-  const selRect = drag
-    ? { x: Math.min(drag.sx, drag.cx), y: Math.min(drag.sy, drag.cy), w: Math.abs(drag.cx - drag.sx), h: Math.abs(drag.cy - drag.sy) }
-    : cropRect;
-
-  const btnStyle = (color, disabled) => ({
-    padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 700,
-    border: `1px solid ${color}50`, background: `${color}18`,
-    color: disabled ? "#6b7280" : color,
-    cursor: disabled ? "not-allowed" : "pointer",
-  });
 
   const statusColor = status.startsWith("完了") ? "#4ade80"
     : (status.includes("エラー") || status.includes("イレギュラー") || status.includes("失敗")) ? "#ef4444"
@@ -372,39 +308,17 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
 
   return (
     <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 16, marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: isCapturing ? 10 : 0, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: "#e5e7eb" }}>📷 画面キャプチャ</span>
-        {!isCapturing
-          ? <button onClick={startCapture} style={btnStyle("#4ade80", false)}>開始</button>
-          : <>
-              <button onClick={recognize} disabled={isAnalyzing} style={btnStyle("#fbbf24", isAnalyzing)}>
-                {isAnalyzing ? "解析中..." : "🔍 読み取る"}
-              </button>
-              <button onClick={stopCapture} style={btnStyle("#ef4444", false)}>終了</button>
-            </>
-        }
+        <button onClick={captureAndRead} disabled={isAnalyzing} style={{
+          padding: "5px 16px", borderRadius: 6, fontSize: 12, fontWeight: 700,
+          border: "1px solid rgba(251,191,36,0.5)", background: "rgba(251,191,36,0.15)",
+          color: isAnalyzing ? "#6b7280" : "#fbbf24",
+          cursor: isAnalyzing ? "not-allowed" : "pointer",
+        }}>
+          {isAnalyzing ? "読み取り中..." : "🔍 キャプチャして読み取る"}
+        </button>
       </div>
-
-      {isCapturing && (
-        <div style={{ position: "relative", borderRadius: 8, overflow: "hidden", background: "#000", userSelect: "none" }}>
-          <video ref={videoRef} muted autoPlay playsInline
-            style={{ width: "100%", maxHeight: 220, objectFit: "fill", display: "block" }} />
-          <div ref={overlayRef}
-            onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
-            style={{ position: "absolute", inset: 0, cursor: "crosshair" }}>
-            {selRect && selRect.w > 0.005 && (
-              <div style={{
-                position: "absolute",
-                left: `${selRect.x * 100}%`, top: `${selRect.y * 100}%`,
-                width: `${selRect.w * 100}%`, height: `${selRect.h * 100}%`,
-                border: "2px solid #fbbf24", background: "rgba(251,191,36,0.1)",
-                pointerEvents: "none",
-              }} />
-            )}
-          </div>
-        </div>
-      )}
-
       <canvas ref={canvasRef} style={{ display: "none" }} />
       {status && <p style={{ fontSize: 11, marginTop: 8, color: statusColor }}>{status}</p>}
     </div>
