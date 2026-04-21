@@ -301,57 +301,62 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
   const parseOCR = (rawText) => {
     const text = rawText.replace(/\s+/g, '');
 
-    const findMatches = (list, type) => {
-      const results = [];
+    // 完全一致領域を記録し、その外でのみファジー検索する
+    // 同一効果の複数出現位置を全て保持して最近傍triplet選択に使う
+    const findMatches = (list, type, exactRegions) => {
+      const found = new Map(); // value → { value, type, score, positions[] }
+
+      // Pass1: 完全一致 - 全出現位置を記録し、その領域を占有済みにする
       for (const effect of list) {
-        const idx = text.indexOf(effect);
-        if (idx !== -1) {
-          results.push({ value: effect, type, score: 1.0, pos: idx });
-          continue;
+        let idx = text.indexOf(effect);
+        while (idx !== -1) {
+          exactRegions.push([idx, idx + effect.length]);
+          if (!found.has(effect)) found.set(effect, { value: effect, type, score: 1.0, positions: [] });
+          found.get(effect).positions.push(idx);
+          idx = text.indexOf(effect, idx + effect.length);
         }
+      }
+
+      // Pass2: ファジー検索 - 完全一致済み領域と重なる窓はスキップ
+      for (const effect of list) {
+        if (found.has(effect)) continue;
         const len = effect.length;
         if (len < 2 || text.length < len) continue;
-        // 短いエフェクト名(2-3文字)は誤マッチしやすいので閾値を上げる
         const threshold = len <= 3 ? 0.75 : len <= 4 ? 0.60 : 0.50;
         let best = 0, bestPos = -1;
         for (let i = 0; i <= text.length - len; i++) {
-          const s = simScore(text.slice(i, i + len), effect);
-          if (s > best) { best = s; bestPos = i; }
+          if (exactRegions.some(([s, e]) => i < e && i + len > s)) continue;
+          const sc = simScore(text.slice(i, i + len), effect);
+          if (sc > best) { best = sc; bestPos = i; }
         }
-        if (best >= threshold) results.push({ value: effect, type, score: best, pos: bestPos });
+        if (best >= threshold) found.set(effect, { value: effect, type, score: best, positions: [bestPos] });
       }
-      const byValue = new Map();
-      for (const m of results) {
-        if (!byValue.has(m.value) || byValue.get(m.value).score < m.score) byValue.set(m.value, m);
-      }
-      return [...byValue.values()];
+
+      return [...found.values()];
     };
 
-    const bases  = findMatches(allEffects.bases,  'base');
-    const subs   = findMatches(allEffects.subs,   'sub');
-    const skills = findMatches(allEffects.skills, 'skill');
+    // 各カテゴリは同一の占有領域リストを共有する（クロスカテゴリの誤検出も防ぐ）
+    const sharedRegions = [];
+    const bases  = findMatches(allEffects.bases,  'base',  sharedRegions);
+    const subs   = findMatches(allEffects.subs,   'sub',   sharedRegions);
+    const skills = findMatches(allEffects.skills, 'skill', sharedRegions);
 
-    if (bases.length === 1 && subs.length === 1 && skills.length === 1) {
-      const result = { base: bases[0].value, sub: subs[0].value, skill: skills[0].value };
-      onDetected(result);
-      setStatus(`✅ 完了: ${result.base} / ${result.sub} / ${result.skill}`);
-      return;
-    }
-
-    // 複数候補 → テキスト内で最もまとまって現れる三つ組を選ぶ
+    // 全出現位置の組み合わせで最もまとまった三つ組を選ぶ
     if (bases.length >= 1 && subs.length >= 1 && skills.length >= 1) {
       let bestSpan = Infinity, bestTriple = null;
-      for (const b of bases) {
-        for (const s of subs) {
-          for (const sk of skills) {
-            const span = Math.max(b.pos, s.pos, sk.pos) - Math.min(b.pos, s.pos, sk.pos);
-            if (span < bestSpan) { bestSpan = span; bestTriple = { base: b, sub: s, skill: sk }; }
+      for (const b of bases) for (const bp of b.positions) {
+        for (const s of subs) for (const sp of s.positions) {
+          for (const sk of skills) for (const skp of sk.positions) {
+            const span = Math.max(bp, sp, skp) - Math.min(bp, sp, skp);
+            if (span < bestSpan) { bestSpan = span; bestTriple = { base: b.value, sub: s.value, skill: sk.value }; }
           }
         }
       }
-      const result = { base: bestTriple.base.value, sub: bestTriple.sub.value, skill: bestTriple.skill.value };
-      onDetected(result);
-      setStatus(`✅ 完了: ${result.base} / ${result.sub} / ${result.skill}　(候補: 基礎×${bases.length} 付加×${subs.length} スキル×${skills.length})`);
+      onDetected(bestTriple);
+      const extra = (bases.length + subs.length + skills.length > 3)
+        ? `　(候補: 基礎×${bases.length} 付加×${subs.length} スキル×${skills.length})`
+        : '';
+      setStatus(`✅ 完了: ${bestTriple.base} / ${bestTriple.sub} / ${bestTriple.skill}${extra}`);
       return;
     }
 
