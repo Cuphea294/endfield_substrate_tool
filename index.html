@@ -132,6 +132,24 @@ const RC = { "☆6": "#fbbf24", "☆5": "#c084fc", "☆4": "#60a5fa", "☆3": "#
 const TI = { 片手剣: "⚔️", 両手剣: "🗡️", 長柄武器: "🔱", 拳銃: "🔫", アーツユニット: "💎" };
 const EC = { base: "#60a5fa", sub: "#34d399", skill: "#f472b6" };
 
+// 白テキスト抽出: 高輝度・低彩度のピクセルを黒文字に、それ以外を白背景に
+function applyWhiteTextFilter(canvas) {
+  const ctx = canvas.getContext('2d');
+  const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = d.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const r = px[i], g = px[i+1], b = px[i+2];
+    const lum = (r * 299 + g * 587 + b * 114) / 1000;
+    const sat = Math.max(r, g, b) - Math.min(r, g, b);
+    // 白/明るいグレー文字: 輝度高く彩度低い → 黒文字として保持
+    // 黄色背景・暗背景・カラーアイコン → 白背景に変換
+    const isText = lum > 155 && sat < 55;
+    px[i] = px[i+1] = px[i+2] = isText ? 0 : 255;
+    px[i+3] = 255;
+  }
+  ctx.putImageData(d, 0, 0);
+}
+
 // Levenshtein距離ベースの類似度（文字の順序・編集距離を考慮）
 function simScore(a, b) {
   if (a === b) return 1;
@@ -256,11 +274,16 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       c.width  = Math.round(srcW * scale);
       c.height = Math.round(srcH * scale);
       c.getContext('2d').drawImage(video, srcX, 0, srcW, srcH, 0, 0, c.width, c.height);
-      setDebugImg(c.toDataURL('image/jpeg', 0.55));
+
+      // 白テキスト抽出フィルター適用（ゲームUIの黄色背景などのノイズを除去）
+      applyWhiteTextFilter(c);
+      setDebugImg(c.toDataURL('image/png'));
 
       if (!workerRef.current) {
         setStatus("言語データ読み込み中（初回のみ）...");
         workerRef.current = await Tesseract.createWorker('jpn');
+        // PSM 11: SPARSE_TEXT - レイアウト無視でテキストを探す
+        await workerRef.current.setParameters({ tessedit_pageseg_mode: '11' });
       }
       setStatus("OCR処理中...");
       const { data: { text } } = await workerRef.current.recognize(c);
@@ -288,12 +311,14 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
         }
         const len = effect.length;
         if (len < 2 || text.length < len) continue;
+        // 短いエフェクト名(2-3文字)は誤マッチしやすいので閾値を上げる
+        const threshold = len <= 3 ? 0.75 : len <= 4 ? 0.60 : 0.50;
         let best = 0, bestPos = -1;
         for (let i = 0; i <= text.length - len; i++) {
           const s = simScore(text.slice(i, i + len), effect);
           if (s > best) { best = s; bestPos = i; }
         }
-        if (best >= 0.45) results.push({ value: effect, type, score: best, pos: bestPos });
+        if (best >= threshold) results.push({ value: effect, type, score: best, pos: bestPos });
       }
       const byValue = new Map();
       for (const m of results) {
