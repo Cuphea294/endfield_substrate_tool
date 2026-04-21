@@ -209,11 +209,21 @@ function DarkSelect({ value, onChange, options, borderColor, placeholder }) {
   </select>;
 }
 
+const CROP_PRESETS = [
+  { label: "左33%", x: 0,    w: 0.33 },
+  { label: "左50%", x: 0,    w: 0.50 },
+  { label: "中央",  x: 0.25, w: 0.50 },
+  { label: "右50%", x: 0.50, w: 0.50 },
+  { label: "全体",  x: 0,    w: 1.00 },
+];
+
 function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
   const canvasRef = useRef(null);
   const workerRef = useRef(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [status, setStatus] = useState("");
+  const [debugImg, setDebugImg] = useState(null);
+  const [cropIdx, setCropIdx] = useState(0);
 
   useEffect(() => {
     return () => { if (workerRef.current) workerRef.current.terminate(); };
@@ -221,6 +231,7 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
 
   const captureAndRead = async () => {
     setIsAnalyzing(true);
+    setDebugImg(null);
     setStatus("共有する画面を選択してください...");
     let stream = null;
     try {
@@ -236,14 +247,16 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       await video.play();
       await new Promise(resolve => setTimeout(resolve, 150));
 
-      // 左33%に絞って中央パネルの混入を防ぐ、2倍拡大でOCR精度を上げる
-      const cropW = Math.round(video.videoWidth * 0.33);
-      const cropH = video.videoHeight;
-      const scale = 2;
+      const preset = CROP_PRESETS[cropIdx];
+      const srcX  = Math.round(video.videoWidth * preset.x);
+      const srcW  = Math.round(video.videoWidth * preset.w);
+      const srcH  = video.videoHeight;
+      const scale = Math.min(2, 1400 / srcW);
       const c = canvasRef.current;
-      c.width  = cropW * scale;
-      c.height = cropH * scale;
-      c.getContext('2d').drawImage(video, 0, 0, cropW, cropH, 0, 0, c.width, c.height);
+      c.width  = Math.round(srcW * scale);
+      c.height = Math.round(srcH * scale);
+      c.getContext('2d').drawImage(video, srcX, 0, srcW, srcH, 0, 0, c.width, c.height);
+      setDebugImg(c.toDataURL('image/jpeg', 0.55));
 
       if (!workerRef.current) {
         setStatus("言語データ読み込み中（初回のみ）...");
@@ -251,7 +264,7 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
       }
       setStatus("OCR処理中...");
       const { data: { text } } = await workerRef.current.recognize(c);
-      setStatus("解析中... (OCR raw: " + text.replace(/\n/g, '|').slice(0, 120) + ")");
+      setStatus("解析中... OCR: " + text.replace(/\n/g, '|').slice(0, 150));
       parseOCR(text);
     } catch (e) {
       const msg = e?.message || '';
@@ -263,76 +276,88 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
   };
 
   const parseOCR = (rawText) => {
-    const lines = rawText.split('\n')
-      .map(l => l
-        .replace(/^[○◦・°o\s]+/, '')
-        .replace(/[✏✎🖊].*/g, '')
-        .replace(/\s*[|｜]\s*[+＋]\d.*$/, '')
-        .replace(/[+＋]\d.*$/, '')
-        .replace(/\s+/g, '')   // スペース除去（OCRが「知性 UP」と分割するケア）
-        .trim()
-      )
-      .filter(l => l.length >= 2);
+    const text = rawText.replace(/\s+/g, '');
 
-    // 各行を効果リストにマッチング
-    const tagged = lines.map(line => {
-      // まず完全一致の部分文字列検索（最優先）
-      for (const [list, type] of [[allEffects.bases,'base'],[allEffects.subs,'sub'],[allEffects.skills,'skill']]) {
-        for (const effect of list) {
-          if (line.includes(effect)) return { value: effect, type, score: 1.0 };
+    const findMatches = (list, type) => {
+      const results = [];
+      for (const effect of list) {
+        const idx = text.indexOf(effect);
+        if (idx !== -1) {
+          results.push({ value: effect, type, score: 1.0, pos: idx });
+          continue;
+        }
+        const len = effect.length;
+        if (len < 2 || text.length < len) continue;
+        let best = 0, bestPos = -1;
+        for (let i = 0; i <= text.length - len; i++) {
+          const s = simScore(text.slice(i, i + len), effect);
+          if (s > best) { best = s; bestPos = i; }
+        }
+        if (best >= 0.45) results.push({ value: effect, type, score: best, pos: bestPos });
+      }
+      const byValue = new Map();
+      for (const m of results) {
+        if (!byValue.has(m.value) || byValue.get(m.value).score < m.score) byValue.set(m.value, m);
+      }
+      return [...byValue.values()];
+    };
+
+    const bases  = findMatches(allEffects.bases,  'base');
+    const subs   = findMatches(allEffects.subs,   'sub');
+    const skills = findMatches(allEffects.skills, 'skill');
+
+    if (bases.length === 1 && subs.length === 1 && skills.length === 1) {
+      const result = { base: bases[0].value, sub: subs[0].value, skill: skills[0].value };
+      onDetected(result);
+      setStatus(`✅ 完了: ${result.base} / ${result.sub} / ${result.skill}`);
+      return;
+    }
+
+    // 複数候補 → テキスト内で最もまとまって現れる三つ組を選ぶ
+    if (bases.length >= 1 && subs.length >= 1 && skills.length >= 1) {
+      let bestSpan = Infinity, bestTriple = null;
+      for (const b of bases) {
+        for (const s of subs) {
+          for (const sk of skills) {
+            const span = Math.max(b.pos, s.pos, sk.pos) - Math.min(b.pos, s.pos, sk.pos);
+            if (span < bestSpan) { bestSpan = span; bestTriple = { base: b, sub: s, skill: sk }; }
+          }
         }
       }
-      // フォールバック: Levenshtein類似度
-      const bm = bestMatch(line, allEffects.bases);
-      const sm = bestMatch(line, allEffects.subs);
-      const km = bestMatch(line, allEffects.skills);
-      const candidates = [
-        bm ? { ...bm, type: 'base'  } : null,
-        sm ? { ...sm, type: 'sub'   } : null,
-        km ? { ...km, type: 'skill' } : null,
-      ].filter(Boolean).sort((a, b) => b.score - a.score);
-      return candidates.length ? candidates[0] : null;
-    });
-
-    // null を除外した配列でスライディングウィンドウ
-    const nonNull = tagged.filter(Boolean);
-    for (let i = 0; i <= nonNull.length - 3; i++) {
-      const w = nonNull.slice(i, i + 3);
-      const types  = w.map(x => x.type);
-      const values = w.map(x => x.value);
-      if (new Set(types).size === 3 && new Set(values).size === 3) {
-        const result = {
-          base:  w.find(x => x.type === 'base').value,
-          sub:   w.find(x => x.type === 'sub').value,
-          skill: w.find(x => x.type === 'skill').value,
-        };
-        onDetected(result);
-        setStatus(`完了: ${result.base} / ${result.sub} / ${result.skill}`);
-        return;
-      }
+      const result = { base: bestTriple.base.value, sub: bestTriple.sub.value, skill: bestTriple.skill.value };
+      onDetected(result);
+      setStatus(`✅ 完了: ${result.base} / ${result.sub} / ${result.skill}　(候補: 基礎×${bases.length} 付加×${subs.length} スキル×${skills.length})`);
+      return;
     }
 
-    // イレギュラーパターン判定（フォールバック）
-    const unique = [...new Map(nonNull.map(m => [m.value, m])).values()];
-    const bases  = unique.filter(m => m.type === 'base');
-    const subs   = unique.filter(m => m.type === 'sub');
-    const skills = unique.filter(m => m.type === 'skill');
-    if (unique.length >= 3 && (bases.length !== 1 || subs.length !== 1 || skills.length !== 1)) {
+    const total = bases.length + subs.length + skills.length;
+    if (total >= 3) {
       onIrregular();
-      setStatus(`イレギュラー検出 (基礎×${bases.length} 付加×${subs.length} スキル×${skills.length}) → 餌確定`);
-    } else {
-      setStatus("読み取り失敗。OCR: " + rawText.replace(/\n/g, ' ').slice(0, 100));
+      setStatus(`⚡ イレギュラー検出 (基礎×${bases.length} 付加×${subs.length} スキル×${skills.length}) → 餌確定`);
+      return;
     }
+    setStatus(`❌ 読み取り失敗 (${total}件 / 基礎${bases.length} 付加${subs.length} スキル${skills.length})。下のプレビューで範囲を確認してください`);
   };
 
-  const statusColor = status.startsWith("完了") ? "#4ade80"
-    : (status.includes("エラー") || status.includes("イレギュラー") || status.includes("失敗")) ? "#ef4444"
+  const statusColor = status.startsWith("✅") ? "#4ade80"
+    : (status.startsWith("❌") || status.startsWith("エラー")) ? "#ef4444"
+    : status.startsWith("⚡") ? "#f59e0b"
     : "#9ca3af";
 
   return (
     <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: "#e5e7eb" }}>📷 画面キャプチャ</span>
+        <div style={{ display: "flex", gap: 2 }}>
+          {CROP_PRESETS.map((p, i) => (
+            <button key={i} onClick={() => setCropIdx(i)} style={{
+              padding: "3px 8px", borderRadius: 4, fontSize: 11, fontWeight: cropIdx === i ? 700 : 400,
+              border: cropIdx === i ? "1.5px solid #60a5fa" : "1px solid rgba(255,255,255,0.12)",
+              background: cropIdx === i ? "rgba(96,165,250,0.15)" : "transparent",
+              color: cropIdx === i ? "#60a5fa" : "#6b7280", cursor: "pointer",
+            }}>{p.label}</button>
+          ))}
+        </div>
         <button onClick={captureAndRead} disabled={isAnalyzing} style={{
           padding: "5px 16px", borderRadius: 6, fontSize: 12, fontWeight: 700,
           border: "1px solid rgba(251,191,36,0.5)", background: "rgba(251,191,36,0.15)",
@@ -343,7 +368,13 @@ function ScreenCapturePanel({ allEffects, onDetected, onIrregular }) {
         </button>
       </div>
       <canvas ref={canvasRef} style={{ display: "none" }} />
-      {status && <p style={{ fontSize: 11, marginTop: 8, color: statusColor }}>{status}</p>}
+      {status && <p style={{ fontSize: 11, marginTop: 8, color: statusColor, lineHeight: 1.5 }}>{status}</p>}
+      {debugImg && (
+        <details style={{ marginTop: 8 }}>
+          <summary style={{ fontSize: 11, color: "#6b7280", cursor: "pointer", userSelect: "none" }}>🖼 キャプチャ範囲を確認（クリックで展開）</summary>
+          <img src={debugImg} alt="captured" style={{ maxWidth: "100%", marginTop: 6, borderRadius: 4, border: "1px solid rgba(255,255,255,0.1)", display: "block" }} />
+        </details>
+      )}
     </div>
   );
 }
